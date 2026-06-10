@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Open MT5
+Comment=Start MetaTrader 5 via Wine
+Exec=/home/teguh/mt5bot/run-mt5.sh
+Terminal=false
+Categories=Finance;

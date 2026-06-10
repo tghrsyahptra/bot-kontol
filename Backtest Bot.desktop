@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Backtest Bot
+Comment=Run strategy backtest from MT5 data
+Exec=xfce4-terminal --hold --command /home/teguh/mt5bot/backtest.sh
+Terminal=false
+Categories=Finance;

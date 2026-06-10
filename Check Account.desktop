@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Check Account
+Comment=Show MT5 account balance
+Exec=xfce4-terminal --hold --command /home/teguh/mt5bot/check-account.sh
+Terminal=false
+Categories=Finance;

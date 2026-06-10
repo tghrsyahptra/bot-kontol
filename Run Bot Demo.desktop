@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Run Bot Demo
+Comment=Run MT5 Python bot with LIVE_TRADING setting from .env
+Exec=xfce4-terminal --hold --command /home/teguh/mt5bot/run-bot-demo.sh
+Terminal=false
+Categories=Finance;
