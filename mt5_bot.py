@@ -223,6 +223,58 @@ def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float, sy
     logging.info("Order sukses: %s %s %.2f lot price=%.5f sl=%.5f tp=%.5f (atr=%.5f)", signal, symbol, volume, price, request["sl"], request["tp"], atr)
 
 
+def update_trailing_stops(config: BotConfig) -> None:
+    account = mt5.account_info()
+    if account is None:
+        return
+    positions = mt5.positions_get() or []
+    for p in positions:
+        if p.magic != config.magic_number:
+            continue
+        if p.sl == 0 and p.tp == 0:
+            continue
+        info = mt5.symbol_info(p.symbol)
+        if info is None:
+            continue
+        df = None
+        try:
+            tf = timeframe_id(config)
+            rates = mt5.copy_rates_from_pos(p.symbol, tf, 0, 100)
+            if rates is not None and len(rates) > 10:
+                import pandas as _pd
+                df = _pd.DataFrame(rates)
+                tr = _pd.concat([df["high"] - df["low"], (df["high"] - df["close"].shift()).abs(), (df["low"] - df["close"].shift()).abs()], axis=1).max(axis=1)
+                atr = float(tr.tail(10).mean())
+        except Exception:
+            atr = 1
+
+        point = info.point
+        current = p.price_current
+        trail_dist = max(atr / point * config.trail_atr_mult, config.trail_min_points) * point
+
+        if p.type == 0:  # BUY
+            new_sl = current - trail_dist
+            entry_distance = abs(current - p.price_open)
+            sl_distance = current - p.sl if p.sl > 0 else 0
+            if entry_distance >= config.trail_breakeven_points * point and p.sl < p.price_open:
+                new_sl = p.price_open
+            if new_sl > p.sl:
+                req = {"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "sl": round(new_sl, info.digits), "tp": p.tp}
+                result = mt5.order_send(req)
+                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    logging.info("Trail BUY %s: sl moved to %.5f (profit=%.2f)", p.symbol, new_sl, p.profit)
+        elif p.type == 1:  # SELL
+            new_sl = current + trail_dist
+            entry_distance = abs(current - p.price_open)
+            if entry_distance >= config.trail_breakeven_points * point and (p.sl == 0 or p.sl > p.price_open):
+                new_sl = p.price_open
+            if p.sl == 0 or new_sl < p.sl:
+                req = {"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "sl": round(new_sl, info.digits), "tp": p.tp}
+                result = mt5.order_send(req)
+                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    logging.info("Trail SELL %s: sl moved to %.5f (profit=%.2f)", p.symbol, new_sl, p.profit)
+
+
 def run_once(config: BotConfig) -> None:
     total_positions = len(open_positions(config))
 
@@ -277,6 +329,7 @@ def main() -> None:
     try:
         while True:
             try:
+                update_trailing_stops(config)
                 run_once(config)
             except Exception as exc:
                 logging.exception("Loop error: %s", exc)

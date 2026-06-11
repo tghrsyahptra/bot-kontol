@@ -51,6 +51,9 @@ class BotConfig:
     min_sl_points: int
     sl_atr_mult: float
     tp_atr_mult: float
+    trail_atr_mult: float
+    trail_min_points: int
+    trail_breakeven_points: int
     magic_number: int
 
 
@@ -80,5 +83,8 @@ def load_config() -> BotConfig:
         min_sl_points=_int("MIN_SL_POINTS", 20),
         sl_atr_mult=_float("SL_ATR_MULT", 1.0),
         tp_atr_mult=_float("TP_ATR_MULT", 2.0),
+        trail_atr_mult=_float("TRAIL_ATR_MULT", 2.0),
+        trail_min_points=_int("TRAIL_MIN_POINTS", 30),
+        trail_breakeven_points=_int("TRAIL_BREAKEVEN_POINTS", 60),
         magic_number=_int("MAGIC_NUMBER", 260609),
     )
