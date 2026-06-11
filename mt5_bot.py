@@ -161,6 +161,15 @@ def calculate_volume(config: BotConfig, sl_distance: float, symbol: str) -> floa
     max_vol = min(info.volume_max, config.max_volume)
     raw_volume = risk_amount / loss_per_lot
     volume = max(info.volume_min, min(raw_volume, max_vol))
+
+    margin_calc = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, volume, info.ask or info.bid)
+    if margin_calc is None:
+        margin_calc = 0
+    margin_available = account.equity - account.margin
+    if margin_calc > margin_available and margin_available > 0:
+        max_by_margin = volume * (margin_available / margin_calc)
+        volume = min(volume, max_by_margin)
+
     steps = round(volume / info.volume_step)
     return round(steps * info.volume_step, 2)
 
@@ -183,6 +192,8 @@ def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float, sy
     sl = price - sl_dist if is_buy else price + sl_dist
     tp = price + tp_dist if is_buy else price - tp_dist
     volume = calculate_volume(config, sl_dist, symbol)
+
+    logging.info("Siap order: %s %s %.2f lot price=%.5f sl=%.5f tp=%.5f", signal, symbol, volume, price, sl, tp)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
