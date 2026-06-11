@@ -22,11 +22,14 @@ class MarketSnapshot:
 
 
 def setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.propagate = False
 
 
 def connect(config: BotConfig) -> None:
@@ -333,6 +336,7 @@ def main() -> None:
                 run_once(config)
             except Exception as exc:
                 logging.exception("Loop error: %s", exc)
+            logging.info("=== HEARTBEAT ===")
             time.sleep(config.loop_seconds)
     finally:
         mt5.shutdown()
