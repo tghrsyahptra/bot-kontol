@@ -1,7 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 import MetaTrader5 as mt5
 import pandas as pd
@@ -18,7 +18,6 @@ class MarketSnapshot:
     stoch_k: float
     stoch_d: float
     close: float
-    ema200: float
     atr: float
 
 
@@ -75,11 +74,11 @@ def timeframe_id(config: BotConfig) -> int:
     return mapping[minutes]
 
 
-def fetch_rates(config: BotConfig, bars: int = 300) -> pd.DataFrame:
+def fetch_rates(config: BotConfig, symbol: str, bars: int = 300) -> pd.DataFrame:
     tf = timeframe_id(config)
-    rates = mt5.copy_rates_from_pos(config.symbol, tf, 0, bars)
+    rates = mt5.copy_rates_from_pos(symbol, tf, 0, bars)
     if rates is None or len(rates) < 220:
-        raise RuntimeError("Data candle MT5 belum cukup")
+        raise RuntimeError(f"Data candle MT5 belum cukup untuk {symbol}")
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s")
     return df
@@ -94,10 +93,6 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     return tr.ewm(span=period, adjust=False).mean()
 
 
-def ema(close: pd.Series, period: int) -> pd.Series:
-    return close.ewm(span=period, adjust=False).mean()
-
-
 def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14, d_period: int = 3, smooth: int = 3):
     low_14 = low.rolling(k_period).min()
     high_14 = high.rolling(k_period).max()
@@ -109,37 +104,30 @@ def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int 
     return k_line, d_line
 
 
-def analyze_market(config: BotConfig) -> MarketSnapshot:
-    df = fetch_rates(config, 300)
-    df["ema200"] = ema(df["close"], 200)
+def analyze_market(config: BotConfig, symbol: str) -> MarketSnapshot:
+    df = fetch_rates(config, symbol, 300)
     df["atr"] = calculate_atr(df["high"], df["low"], df["close"], 10)
     df["stoch_k"], df["stoch_d"] = stochastic(df["high"], df["low"], df["close"], 14, 3, 3)
 
     current = df.iloc[-2]
     previous = df.iloc[-3]
-    close_val = float(current.close)
-    ema200_val = float(current.ema200)
-    atr_val = float(current.atr)
     k_val = float(current.stoch_k)
     k_prev = float(previous.stoch_k)
     d_val = float(current.stoch_d)
-
-    uptrend = close_val > ema200_val
-    downtrend = close_val < ema200_val
+    d_prev = float(previous.stoch_d)
 
     signal: Signal = "hold"
-    if uptrend and k_prev < 20 and k_val > k_prev and k_val < d_val:
+    if k_prev <= d_prev and k_val > d_val:
         signal = "buy"
-    elif downtrend and k_prev > 80 and k_val < k_prev and k_val > d_val:
+    elif k_prev >= d_prev and k_val < d_val:
         signal = "sell"
 
     return MarketSnapshot(
         signal=signal,
         stoch_k=k_val,
         stoch_d=d_val,
-        close=close_val,
-        ema200=ema200_val,
-        atr=atr_val,
+        close=float(current.close),
+        atr=float(current.atr),
     )
 
 
@@ -151,14 +139,17 @@ def current_spread_points(symbol: str) -> int:
     return round((tick.ask - tick.bid) / info.point)
 
 
-def open_positions(config: BotConfig):
-    positions = mt5.positions_get(symbol=config.symbol) or []
+def open_positions(config: BotConfig, symbol: Optional[str] = None):
+    if symbol:
+        positions = mt5.positions_get(symbol=symbol) or []
+    else:
+        positions = mt5.positions_get() or []
     return [p for p in positions if p.magic == config.magic_number]
 
 
-def calculate_volume(config: BotConfig, sl_distance: float) -> float:
+def calculate_volume(config: BotConfig, sl_distance: float, symbol: str) -> float:
     account = mt5.account_info()
-    info = mt5.symbol_info(config.symbol)
+    info = mt5.symbol_info(symbol)
     if account is None or info is None:
         raise RuntimeError("Account/symbol info tidak tersedia untuk hitung lot")
 
@@ -167,16 +158,16 @@ def calculate_volume(config: BotConfig, sl_distance: float) -> float:
     if loss_per_lot <= 0:
         return info.volume_min
 
-    max_vol = min(info.volume_max, getattr(config, "max_volume", 100))
+    max_vol = min(info.volume_max, config.max_volume)
     raw_volume = risk_amount / loss_per_lot
     volume = max(info.volume_min, min(raw_volume, max_vol))
     steps = round(volume / info.volume_step)
     return round(steps * info.volume_step, 2)
 
 
-def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float) -> None:
-    tick = mt5.symbol_info_tick(config.symbol)
-    info = mt5.symbol_info(config.symbol)
+def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float, symbol: str) -> None:
+    tick = mt5.symbol_info_tick(symbol)
+    info = mt5.symbol_info(symbol)
     if tick is None or info is None:
         raise RuntimeError("Tick/symbol info tidak tersedia untuk order")
 
@@ -191,11 +182,11 @@ def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float) ->
     tp_dist = tp_points * info.point
     sl = price - sl_dist if is_buy else price + sl_dist
     tp = price + tp_dist if is_buy else price - tp_dist
-    volume = calculate_volume(config, sl_dist)
+    volume = calculate_volume(config, sl_dist, symbol)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": config.symbol,
+        "symbol": symbol,
         "volume": volume,
         "type": order_type,
         "price": price,
@@ -203,7 +194,7 @@ def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float) ->
         "tp": round(tp, info.digits),
         "deviation": 20,
         "magic": config.magic_number,
-        "comment": "stochastic-scalper",
+        "comment": "yolo-scalper",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_FOK,
     }
@@ -218,39 +209,59 @@ def send_order(config: BotConfig, signal: Literal["buy", "sell"], atr: float) ->
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         raise RuntimeError(f"Order ditolak: retcode={result.retcode} comment={result.comment}")
 
-    logging.info("Order sukses: %s %.2f lot price=%.5f sl=%.5f tp=%.5f (atr=%.5f)", signal, volume, price, request["sl"], request["tp"], atr)
+    logging.info("Order sukses: %s %s %.2f lot price=%.5f sl=%.5f tp=%.5f (atr=%.5f)", signal, symbol, volume, price, request["sl"], request["tp"], atr)
 
 
 def run_once(config: BotConfig) -> None:
-    spread = current_spread_points(config.symbol)
-    if spread > config.max_spread_points:
-        logging.info("Skip: spread %s points > max %s", spread, config.max_spread_points)
-        return
+    total_positions = len(open_positions(config))
 
-    positions = open_positions(config)
-    if len(positions) >= config.max_open_positions:
-        logging.info("Skip: posisi terbuka bot sudah %s", len(positions))
-        return
+    for symbol in config.symbols:
+        if total_positions >= config.max_open_positions:
+            break
 
-    snapshot = analyze_market(config)
-    trend = "UPTREND" if snapshot.close > snapshot.ema200 else "DOWNTREND"
-    logging.info(
-        "Signal=%s trend=%s close=%.5f ema200=%.5f stoch=%.2f/%.2f atr=%.5f spread=%s",
-        snapshot.signal, trend, snapshot.close, snapshot.ema200,
-        snapshot.stoch_k, snapshot.stoch_d, snapshot.atr, spread,
-    )
+        try:
+            spread = current_spread_points(symbol)
+        except RuntimeError:
+            continue
 
-    if snapshot.signal in {"buy", "sell"}:
-        send_order(config, snapshot.signal, snapshot.atr)
+        if spread > config.max_spread_points:
+            continue
+
+        positions_for_symbol = open_positions(config, symbol)
+        if positions_for_symbol:
+            continue
+
+        try:
+            snapshot = analyze_market(config, symbol)
+        except RuntimeError as exc:
+            logging.debug("Skip %s: %s", symbol, exc)
+            continue
+
+        logging.info(
+            "Signal=%s %s stoch=%.2f/%.2f atr=%.5f spread=%s",
+            snapshot.signal, symbol, snapshot.stoch_k, snapshot.stoch_d, snapshot.atr, spread,
+        )
+
+        if snapshot.signal in {"buy", "sell"}:
+            send_order(config, snapshot.signal, snapshot.atr, symbol)
+            total_positions += 1
 
 
 def main() -> None:
     setup_logging()
     config = load_config()
-    connect(config)
-    ensure_symbol(config.symbol)
 
-    logging.warning("LIVE_TRADING=%s. Gunakan demo dulu sebelum akun real.", config.live_trading)
+    logging.info("Pairs dipantau: %s", config.symbols)
+    logging.info("Risk: %.1f%% per trade, max positions: %s", config.risk_percent, config.max_open_positions)
+
+    connect(config)
+    for sym in config.symbols:
+        try:
+            ensure_symbol(sym)
+        except RuntimeError:
+            logging.warning("Symbol %s tidak tersedia, skip", sym)
+
+    logging.warning("LIVE_TRADING=%s. Mode YOLO: stochastic crossover 2 arah + multi-pair.", config.live_trading)
 
     try:
         while True:

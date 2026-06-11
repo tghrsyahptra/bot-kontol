@@ -41,6 +41,7 @@ class BotConfig:
     mt5_path: str
     live_trading: bool
     symbol: str
+    symbols: list[str]
     timeframe: str
     loop_seconds: int
     risk_percent: float
@@ -59,21 +60,25 @@ def load_config() -> BotConfig:
         allowed = ", ".join(TIMEFRAMES)
         raise ValueError(f"TIMEFRAME tidak valid: {timeframe}. Pilihan: {allowed}")
 
+    raw_symbols = os.getenv("SYMBOLS", os.getenv("SYMBOL", "EURUSD"))
+    symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+
     return BotConfig(
         login=_int("MT5_LOGIN", 0),
         password=os.getenv("MT5_PASSWORD", ""),
         server=os.getenv("MT5_SERVER", ""),
         mt5_path=os.getenv("MT5_PATH", ""),
         live_trading=_bool("LIVE_TRADING", False),
-        symbol=os.getenv("SYMBOL", "EURUSD"),
+        symbol=symbols[0],
+        symbols=symbols,
         timeframe=timeframe,
-        loop_seconds=_int("LOOP_SECONDS", 30),
-        risk_percent=_float("RISK_PERCENT", 1.0),
+        loop_seconds=_int("LOOP_SECONDS", 15),
+        risk_percent=_float("RISK_PERCENT", 5.0),
         max_spread_points=_int("MAX_SPREAD_POINTS", 30),
-        max_open_positions=_int("MAX_OPEN_POSITIONS", 1),
-        max_volume=_float("MAX_VOLUME", 100),
+        max_open_positions=_int("MAX_OPEN_POSITIONS", 5),
+        max_volume=_float("MAX_VOLUME", 50),
         min_sl_points=_int("MIN_SL_POINTS", 20),
-        sl_atr_mult=_float("SL_ATR_MULT", 1.5),
-        tp_atr_mult=_float("TP_ATR_MULT", 3.0),
+        sl_atr_mult=_float("SL_ATR_MULT", 1.0),
+        tp_atr_mult=_float("TP_ATR_MULT", 2.0),
         magic_number=_int("MAGIC_NUMBER", 260609),
     )
